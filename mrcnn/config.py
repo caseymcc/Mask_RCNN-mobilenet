@@ -162,7 +162,7 @@ class Config(object):
     LEARNING_MOMENTUM = 0.9
 
     # Weight decay regularization
-    WEIGHT_DECAY = 0.0001
+    WEIGHT_DECAY = 0.00001 #0.0001
 
     # Loss weights for more precise optimization.
     # Can be used for R-CNN training setup.
@@ -185,7 +185,7 @@ class Config(object):
     #     None: Train BN layers. This is the normal mode
     #     False: Freeze BN layers. Good when using a small batch size
     #     True: (don't use). Set layer in training mode even when inferencing
-    TRAIN_BN = False  # Defaulting to False since batch size is often small
+    TRAIN_BN = True #False  # Defaulting to False since batch size is often small
 
     # Gradient norm clipping
     GRADIENT_CLIP_NORM = 5.0

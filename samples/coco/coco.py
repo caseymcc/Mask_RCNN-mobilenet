@@ -86,8 +86,8 @@ class CocoConfig(Config):
     # Number of classes (including background)
     NUM_CLASSES = 1 + 80  # COCO has 80 classes
 
-    # Which architecture type
-    ARCH = "resnet50"
+    # Which backbone type
+    BACKBONE = "resnet50"
 
 ############################################################
 #  Dataset
@@ -425,9 +425,9 @@ if __name__ == '__main__':
                         default=500,
                         metavar="<image count>",
                         help='Images to use for evaluation (default=500)')
-    parser.add_argument('--architecture', required=False,
+    parser.add_argument('--backbone', required=False,
                         default="resnet50",
-                        metavar="<architecture>",
+                        metavar="<backbone>",
                         help='Feature Pyramid Network backbone type')
     parser.add_argument('--download', required=False,
                         default=False,
@@ -441,7 +441,7 @@ if __name__ == '__main__':
     print("Year: ", args.year)
     print("Logs: ", args.logs)
     print("Auto Download: ", args.download)
-    print("Architecture: ", args.architecture)
+    print("Backbone: ", args.backbone)
 
     # Configurations
     if args.command == "train":
@@ -456,11 +456,12 @@ if __name__ == '__main__':
         config = InferenceConfig()
     config.display()
 
-    # Configure backbone architecture
-    if args.architecture.lower() == "resnet50":
-        config.ARCH = "resnet50"
-    elif args.architecture.lower() == "mobilenet":
-        config.ARCH = "mobilenet"
+    # Configure backbone backbone
+    if args.backbone.lower() == "resnet50":
+        config.BACKBONE = "resnet50"
+    elif args.backbone.lower() == "mobilenet":
+        config.BACKBONE = "mobilenet"
+        config.TRAIN_BN = True
 
     # Create model
     if args.command == "train":
@@ -515,12 +516,16 @@ if __name__ == '__main__':
                     augmentation=augmentation)
 
         # Training - Stage 2
-        # Finetune layers from ResNet stage 4 and up
-        print("Fine tune Resnet stage 4 and up")
+        if config.BACKBONE == "mobilenet":
+            stage_2_layers = '11M+'
+        else:
+            stage_2_layers = '4+'
+
+        print("Fine tune {} stage {} and up".format(config.BACKBONE, stage_2_layers))
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=120,
-                    layers='4+',
+                    layers=stage_2_layers,
                     augmentation=augmentation)
 
         # Training - Stage 3
@@ -531,6 +536,7 @@ if __name__ == '__main__':
                     epochs=160,
                     layers='all',
                     augmentation=augmentation)
+        print("All Done")
 
     elif args.command == "evaluate":
         # Validation dataset

@@ -2,9 +2,17 @@ import os
 import sys
 import time
 import numpy as np
+import lprDataset as lpr
+import skimage.draw
+
+ROOT_DIR = os.path.abspath(".")
+sys.path.append(ROOT_DIR)
 
 from mrcnn.config import Config
 from mrcnn import model as modellib, utils
+
+COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
+DEFAULT_LOGS_DIR = os.path.join(ROOT_DIR, "logs")
 
 class LprConfig(Config):
     """Configuration for training on the toy  dataset.
@@ -15,7 +23,7 @@ class LprConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 1
 
     # Number of classes (including background)
     NUM_CLASSES = 1 + 1  # Background + license plate
@@ -27,74 +35,85 @@ class LprConfig(Config):
     DETECTION_MIN_CONFIDENCE = 0.9
 
 class LprDataset(utils.Dataset):
-    def load_plates(self, dataset_dir, subset):
+    def __init__(self):
+        self.lprDataSet=lpr.WG_LprDataset()
+        super().__init__()
+
+    def load_annotations(self, dataset_dir, subset):
         # Add classes. We have only one class to add.
-        self.add_class("balloon", 1, "balloon")
+        self.add_class("wg_lpr", 1, "licensePlate")
 
         # Train or validation dataset?
         assert subset in ["train", "val"]
-        dataset_dir = os.path.join(dataset_dir, subset)
+#        dataset_dir = os.path.join(dataset_dir, subset)
 
-        # Load annotations
-        # VGG Image Annotator (up to version 1.6) saves each image in the form:
-        # { 'filename': '28503151_5b5b7ec140_b.jpg',
-        #   'regions': {
-        #       '0': {
-        #           'region_attributes': {},
-        #           'shape_attributes': {
-        #               'all_points_x': [...],
-        #               'all_points_y': [...],
-        #               'name': 'polygon'}},
-        #       ... more regions ...
-        #   },
-        #   'size': 100202
-        # }
-        # We mostly care about the x and y coordinates of each region
-        # Note: In VIA 2.0, regions was changed from a dict to a list.
-        annotations = json.load(open(os.path.join(dataset_dir, "via_region_data.json")))
-        annotations = list(annotations.values())  # don't need the dict keys
+        if not self.lprDataSet.directoryOpen:
+            self.lprDataSet.openDirectory(dataset_dir)
+            self.lprDataSet.loadAllImages()
 
-        # The VIA tool saves images in the JSON even if they don't have any
-        # annotations. Skip unannotated images.
-        annotations = [a for a in annotations if a['regions']]
+        imageCount=len(self.lprDataSet.annotatedImages)
+        startIndex=0
+        endIndex=imageCount-1
 
-        # Add images
-        for a in annotations:
-            # Get the x, y coordinaets of points of the polygons that make up
-            # the outline of each object instance. These are stores in the
-            # shape_attributes (see json format above)
-            # The if condition is needed to support VIA versions 1.x and 2.x.
-            if type(a['regions']) is dict:
-                polygons = [r['shape_attributes'] for r in a['regions'].values()]
-            else:
-                polygons = [r['shape_attributes'] for r in a['regions']] 
+        if subset == 'train':
+            endIndex=int(imageCount*0.8)
+        else:
+            startIndex=int(imageCount*0.8)+1
 
-            # load_mask() needs the image size to convert polygons to masks.
-            # Unfortunately, VIA doesn't include it in JSON, so we must read
-            # the image. This is only managable since the dataset is tiny.
-            image_path = os.path.join(dataset_dir, a['filename'])
-            image = skimage.io.imread(image_path)
-            height, width = image.shape[:2]
+        for annotatedImage in self.lprDataSet.annotatedImages[startIndex:endIndex]:
+            image_path=annotatedImage.imageFilePath
+            image=skimage.io.imread(annotatedImage.imageFilePath)
+            height,width=image.shape[:2]
 
+            polygons=[]
+            for annotation in annotatedImage.annotations:
+                if annotation.type != lpr.AnnotationType.LicensePlate:
+                    continue
+
+                polygons.append(annotation.bbox)
             self.add_image(
-                "balloon",
-                image_id=a['filename'],  # use file name as a unique image id
+                "wg_lpr",
+                image_id=annotatedImage.id,  # use file name as a unique image id
                 path=image_path,
                 width=width, height=height,
                 polygons=polygons)
+        
                 
     def load_mask(self, image_id):
+        image_info = self.image_info[image_id]
+        if image_info["source"] != "wg_lpr":
+            return super().load_mask(image_id)
+
+        # Convert polygons to a bitmap mask of shape
+        # [height, width, instance_count]
+        info = self.image_info[image_id]
+        mask = np.zeros([info["height"], info["width"], len(info["polygons"])],
+                        dtype=np.uint8)
+        for i, polygon in enumerate(info["polygons"]):
+            # Get indexes of pixels inside the polygon and set them to 1
+            rr, cc = skimage.draw.polygon(polygon.pointsY, polygon.pointsX)
+            mask[rr, cc, i] = 1
+
+        # Return mask, and array of class IDs of each instance. Since we have
+        # one class ID only, we return an array of 1s
+        return mask.astype(np.bool), np.ones([mask.shape[-1]], dtype=np.int32)
+
     def image_reference(self, image_id):
+        info = self.image_info[image_id]
+        if info["source"] == "wg_lpr":
+            return info["path"]
+        else:
+            super().image_reference(image_id)
 
 def train(model):
     """Train the model."""
     # Training dataset.
     dataset_train = LprDataset()
-    dataset_train.load_plates(args.dataset, "train")
+    dataset_train.load_annotations(args.dataset, "train")
     dataset_train.prepare()
     # Validation dataset
     dataset_val = LprDataset()
-    dataset_val.load_plates(args.dataset, "val")
+    dataset_val.load_annotations(args.dataset, "val")
     dataset_val.prepare()
     # *** This training schedule is an example. Update to your needs ***
     # Since we're using a very small dataset, and starting from
@@ -105,55 +124,10 @@ def train(model):
                 learning_rate=config.LEARNING_RATE,
                 epochs=30,
                 layers='heads')
-    
-def detect_and_color_splash(model, image_path=None, video_path=None):
-    assert image_path or video_path
 
-    # Image or video?
-    if image_path:
-        # Run model detection and generate the color splash effect
-        print("Running on {}".format(args.image))
-        # Read image
-        image = skimage.io.imread(args.image)
-        # Detect objects
-        r = model.detect([image], verbose=1)[0]
-        # Save output
-#        file_name = "splash_{:%Y%m%dT%H%M%S}.png".format(datetime.datetime.now())
-#        skimage.io.imsave(file_name, splash)
-    elif video_path:
-        import cv2
-        # Video capture
-        vcapture = cv2.VideoCapture(video_path)
-        width = int(vcapture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(vcapture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = vcapture.get(cv2.CAP_PROP_FPS)
+def evaluate(model, image_path=None, video_path=None):
+    print("Not implemented yet")
 
-        # Define codec and create video writer
-#        file_name = "splash_{:%Y%m%dT%H%M%S}.avi".format(datetime.datetime.now())
-#        vwriter = cv2.VideoWriter(file_name,
-#                                  cv2.VideoWriter_fourcc(*'MJPG'),
-#                                  fps, (width, height))
-
-        count = 0
-        success = True
-        while success:
-            print("frame: ", count)
-            # Read next image
-            success, image = vcapture.read()
-            if success:
-                # OpenCV returns images as BGR, convert to RGB
-                image = image[..., ::-1]
-                # Detect objects
-                r = model.detect([image], verbose=0)[0]
-                # Color splash
-#                splash = color_splash(image, r['masks'])
-                # RGB -> BGR to save image to video
-#                splash = splash[..., ::-1]
-                # Add image to video writer
-#                vwriter.write(splash)
-                count += 1
-        vwriter.release()
-    print("Saved to ", file_name)
 
 if __name__ == '__main__':
     import argparse

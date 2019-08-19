@@ -48,17 +48,16 @@ class LprDataset(utils.Dataset):
 #        dataset_dir = os.path.join(dataset_dir, subset)
 
         if not self.lprDataSet.directoryOpen:
-            self.lprDataSet.openDirectory(dataset_dir)
-            self.lprDataSet.loadAllImages()
+            self.lprDataSet.openDirectory(dataset_dir, 100)
 
         imageCount=len(self.lprDataSet.annotatedImages)
         startIndex=0
         endIndex=imageCount-1
 
         if subset == 'train':
-            endIndex=int(imageCount*0.8)
+            endIndex=int(imageCount*0.8)-1
         else:
-            startIndex=int(imageCount*0.8)+1
+            startIndex=int(imageCount*0.8)
 
         for annotatedImage in self.lprDataSet.annotatedImages[startIndex:endIndex]:
             image_path=annotatedImage.imageFilePath

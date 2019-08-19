@@ -52,6 +52,7 @@ class AnnotatedImage:
 
         self.id=''
         self.annotations=[]
+        self.valid=False
 
 
     def loadLicensePlateAnnotation(self, annotation):
@@ -65,6 +66,8 @@ class AnnotatedImage:
             licenseAnnot.country=annotation['value']
         if 'box' in annotation:
             licenseAnnot.bbox=loadBBox(annotation['box'])
+        else:
+            return #no bounding box so skip
 
         self.annotations.append(licenseAnnot)
 
@@ -76,6 +79,17 @@ class AnnotatedImage:
         self.width=data['width']
         self.height=data['height']
         self.fileName=data['file_name']
+        self.loaded=True
+
+        if 'difficulty' in data: #skip hard and impossible for now, hard might be good in future
+            if data['info'] == 'hard': 
+                return
+            if data['info'] == 'impossible':
+                return
+
+        if 'info' in data:
+            if 'plate_only' in data['info']: #skip image if only plate
+                return
 
         if 'annotations' in data:
             for annotation in data['annotations']:
@@ -85,7 +99,7 @@ class AnnotatedImage:
                 if annotation['name'] == 'license_plate':
                     self.loadLicensePlateAnnotation(annotation)
 
-        self.loaded=True
+        self.valid=True
 
 class WG_LprDataset:
     def __init__(self):
@@ -97,7 +111,7 @@ class WG_LprDataset:
         self.annotatedImages=[]
         self.directoryOpen=False
 
-    def openDirectory(self, rootDirectory):
+    def openDirectory(self, rootDirectory, limit=0):
         self.rootDirectory=rootDirectory
         self.dataDirectory=os.path.join(rootDirectory, 'data')
         self.imageDirectory=os.path.join(rootDirectory, 'images')
@@ -125,17 +139,17 @@ class WG_LprDataset:
                 if not os.path.exists(imageFilePath):
                     continue #could not fine image skip
 
-            self.annotatedImages.append(AnnotatedImage(dataFilePath, imageFilePath))
+            annotatedImage=AnnotatedImage(dataFilePath, imageFilePath)
+
+            annotatedImage.load()
+            
+            if not annotatedImage.valid:
+                continue
+
+            self.annotatedImages.append(annotatedImage)
             index=index+1
 
-            if index>100:
+            if limit>0 and index>=limit:
                 break
         
         self.directoryOpen=True
-
-
-    def loadAllImages(self):
-        for annotatedImage in self.annotatedImages:
-            if annotatedImage.loaded:
-                continue
-            annotatedImage.load()
